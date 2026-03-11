@@ -688,8 +688,9 @@
     <div id="dash-content">
       <div class="week-bar">
         <div class="week-label">Your Time at a Glance</div>
-        <div class="week-controls">
+        <div class="week-controls" style="display:flex;align-items:center;gap:14px;">
           <div class="week-history" id="week-chips"></div>
+          <button class="btn btn-outline btn-sm" onclick="exportPDF()">⬇ Export PDF</button>
         </div>
       </div>
 
@@ -972,27 +973,39 @@ function buildDashboard() {
   document.getElementById('dash-no-data').style.display = 'none';
   document.getElementById('dash-content').style.display = 'block';
 
-  dashWeek = dashWeek && weeklyData[dashWeek] ? dashWeek : weeks[weeks.length-1];
+  if (!dashWeek) dashWeek = weeks[weeks.length - 1];
 
-  // week chips
+  // week chips — always show All Weeks + individual weeks
   const chips = document.getElementById('week-chips');
-  chips.innerHTML = weeks.map(w => `
-    <div class="week-chip ${w===dashWeek?'active':''}" onclick="selectDashWeek('${w}')">${w.replace('W','W ')}</div>
-  `).join('');
+  chips.innerHTML = `
+    <div class="week-chip ${dashWeek==='all'?'active':''}" onclick="selectDashWeek('all')">All Weeks</div>
+    ${weeks.map(w => `<div class="week-chip ${w===dashWeek?'active':''}" onclick="selectDashWeek('${w}')">${w.replace('-W','W ')}</div>`).join('')}
+  `;
 
-  const d = weeklyData[dashWeek];
-  const totalMeetHours = d.meetings.reduce((s,m)=>s+m.hours,0);
-  const totalTaskHours = d.tasks.reduce((s,t)=>s+t.hours,0);
+  const isAll = dashWeek === 'all';
+  const activeWeeks = isAll ? weeks : [dashWeek];
+
+  // Aggregate data across selected weeks
+  let allMeetings = [], allTasks = [], totalFocus = 0, totalStrategic = 0;
+  activeWeeks.forEach(w => {
+    const d = weeklyData[w];
+    allMeetings = allMeetings.concat(d.meetings);
+    allTasks = allTasks.concat(d.tasks);
+    totalFocus += d.focusHours;
+    totalStrategic += d.strategicPct;
+  });
+  const avgStrategic = Math.round(totalStrategic / activeWeeks.length);
+  const totalMeetHours = allMeetings.reduce((s,m)=>s+m.hours,0);
+  const totalTaskHours = allTasks.reduce((s,t)=>s+t.hours,0);
   const total = totalMeetHours + totalTaskHours;
 
   document.getElementById('stat-total').textContent = total.toFixed(1);
-  document.getElementById('stat-focus').textContent = d.focusHours;
-  document.getElementById('stat-strategic').textContent = d.strategicPct + '%';
+  document.getElementById('stat-focus').textContent = isAll ? totalFocus + ' total' : totalFocus;
+  document.getElementById('stat-strategic').textContent = avgStrategic + '%';
 
-  // Category donut
+  // Category donut — aggregated
   const catTotals = {};
-  d.tasks.forEach(t => { catTotals[t.cat] = (catTotals[t.cat]||0) + t.hours; });
-  // Add meeting hours to a "Meetings" bucket
+  allTasks.forEach(t => { catTotals[t.cat] = (catTotals[t.cat]||0) + t.hours; });
   if (totalMeetHours > 0) catTotals['Meetings'] = totalMeetHours;
 
   destroyChart('cat-chart');
@@ -1002,24 +1015,19 @@ function buildDashboard() {
       labels: Object.keys(catTotals),
       datasets: [{
         data: Object.values(catTotals),
-        backgroundColor: Object.keys(catTotals).map(k =>
-          CAT_COLORS[k] || '#ccc'
-        ),
-        borderWidth: 2,
-        borderColor: '#fff'
+        backgroundColor: Object.keys(catTotals).map(k => CAT_COLORS[k] || '#ccc'),
+        borderWidth: 2, borderColor: '#fff'
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'right', labels: { font: { family: 'Inter', size: 11 }, padding: 12, boxWidth: 12 } }
-      }
+      plugins: { legend: { position: 'right', labels: { font: { family: 'Inter', size: 11 }, padding: 12, boxWidth: 12 } } }
     }
   });
 
-  // Meeting necessity
+  // Meeting necessity — aggregated
   const roleCounts = {};
-  d.meetings.forEach(m => { roleCounts[m.role] = (roleCounts[m.role]||0) + m.hours; });
+  allMeetings.forEach(m => { roleCounts[m.role] = (roleCounts[m.role]||0) + m.hours; });
   destroyChart('meet-chart');
   charts['meet-chart'] = new Chart(document.getElementById('meet-chart'), {
     type: 'bar',
@@ -1029,8 +1037,7 @@ function buildDashboard() {
         label: 'Hours',
         data: Object.values(roleCounts),
         backgroundColor: Object.keys(roleCounts).map(k => CAT_COLORS[k]||'#ccc'),
-        borderRadius: 4,
-        borderSkipped: false
+        borderRadius: 4, borderSkipped: false
       }]
     },
     options: {
@@ -1043,7 +1050,7 @@ function buildDashboard() {
     }
   });
 
-  // Trend chart
+  // Trend chart — always all weeks
   destroyChart('trend-chart');
   const sortedWeeks = weeks.slice(-8);
   charts['trend-chart'] = new Chart(document.getElementById('trend-chart'), {
@@ -1054,15 +1061,13 @@ function buildDashboard() {
         {
           label: 'Focus Hours',
           data: sortedWeeks.map(w => weeklyData[w].focusHours),
-          borderColor: '#1B4332',
-          backgroundColor: 'rgba(27,67,50,0.08)',
+          borderColor: '#1B4332', backgroundColor: 'rgba(27,67,50,0.08)',
           tension: 0.3, fill: true, pointBackgroundColor: '#1B4332', pointRadius: 5
         },
         {
           label: 'Strategic %',
           data: sortedWeeks.map(w => weeklyData[w].strategicPct),
-          borderColor: '#B8860B',
-          backgroundColor: 'rgba(184,134,11,0.06)',
+          borderColor: '#B8860B', backgroundColor: 'rgba(184,134,11,0.06)',
           tension: 0.3, fill: true, pointBackgroundColor: '#B8860B', pointRadius: 5,
           yAxisID: 'y2'
         }
@@ -1081,7 +1086,7 @@ function buildDashboard() {
 
   // Meeting table
   const mBody = document.getElementById('meet-tbody');
-  mBody.innerHTML = d.meetings.map(m => `
+  mBody.innerHTML = allMeetings.map(m => `
     <tr>
       <td>${m.name}</td>
       <td>${m.hours}h</td>
@@ -1090,7 +1095,7 @@ function buildDashboard() {
   `).join('') || '<tr><td colspan="3" style="color:var(--text-muted);font-size:0.85rem;">No meetings logged.</td></tr>';
 
   const tBody = document.getElementById('task-tbody');
-  tBody.innerHTML = d.tasks.map(t => `
+  tBody.innerHTML = allTasks.map(t => `
     <tr>
       <td>${t.name}</td>
       <td>${t.hours}h</td>
@@ -1107,6 +1112,118 @@ function selectDashWeek(w) {
 function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
+
+// ─── EXPORT PDF ───────────────────────────────────────────────────────────────
+function exportPDF() {
+  const weeks = Object.keys(weeklyData).sort();
+  if (!weeks.length) { alert('No data to export yet.'); return; }
+
+  const isAll = dashWeek === 'all';
+  const activeWeeks = isAll ? weeks : [dashWeek];
+  const label = isAll ? 'All Weeks' : dashWeek.replace('-W', ' W');
+
+  let allMeetings = [], allTasks = [], totalFocus = 0, totalStrategic = 0, stopItems = [];
+  activeWeeks.forEach(w => {
+    const d = weeklyData[w];
+    allMeetings = allMeetings.concat(d.meetings.map(m => ({...m, week: w})));
+    allTasks = allTasks.concat(d.tasks.map(t => ({...t, week: w})));
+    totalFocus += d.focusHours;
+    totalStrategic += d.strategicPct;
+    if (d.stopDoing) stopItems.push({ week: w, text: d.stopDoing });
+  });
+  const avgStrategic = Math.round(totalStrategic / activeWeeks.length);
+  const totalHours = allMeetings.reduce((s,m)=>s+m.hours,0) + allTasks.reduce((s,t)=>s+t.hours,0);
+  const skippable = allMeetings.filter(m => m.role==='Could have skipped'||m.role==='Observer'||m.role==='Sent someone instead');
+
+  const catTotals = {};
+  allTasks.forEach(t => { catTotals[t.cat] = (catTotals[t.cat]||0) + t.hours; });
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <title>Leader Time Audit — ${label}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Inter', sans-serif; color: #1a1a1a; background: #fff; padding: 48px; font-size: 13px; line-height: 1.6; }
+      .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 20px; border-bottom: 3px solid #B8860B; margin-bottom: 32px; }
+      .header-left { display: flex; align-items: center; gap: 16px; }
+      .logo img { height: 48px; }
+      .report-title { font-size: 18px; font-weight: 700; color: #1B4332; }
+      .report-sub { font-size: 11px; color: #888; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 32px; }
+      .stat { border: 1.5px solid #e0d8c8; border-radius: 8px; padding: 16px; border-top: 3px solid #B8860B; }
+      .stat-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: #888; margin-bottom: 6px; }
+      .stat-value { font-size: 28px; font-weight: 700; color: #1B4332; }
+      h2 { font-size: 13px; font-weight: 700; color: #1B4332; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 2px solid #f0ead6; padding-bottom: 8px; margin: 28px 0 14px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+      th { text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #888; padding: 6px 10px; border-bottom: 2px solid #e0d8c8; }
+      td { padding: 8px 10px; border-bottom: 1px solid #f0ead6; font-size: 12px; }
+      tr:last-child td { border-bottom: none; }
+      .flag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+      .flag-red { background: #fdecea; color: #c0392b; }
+      .flag-green { background: #d4edda; color: #155724; }
+      .stop-box { background: #FAF7F2; border-left: 3px solid #B8860B; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 10px; font-size: 12px; }
+      .stop-week { font-size: 10px; color: #888; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; }
+      .commitment-item { padding: 10px 0; border-bottom: 1px solid #f0ead6; font-size: 12px; display: flex; gap: 10px; }
+      .commitment-item::before { content: '→'; color: #B8860B; font-weight: 700; flex-shrink: 0; }
+      .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #e0d8c8; font-size: 10px; color: #aaa; text-align: center; letter-spacing: 0.05em; }
+      @media print { body { padding: 24px; } }
+    </style>
+  </head><body>
+    <div class="header">
+      <div class="header-left">
+        <div class="logo"><img src="${document.querySelector('.logo-mark img').src}" alt="Scaling Minds"></div>
+      </div>
+      <div>
+        <div class="report-title">Leader Time Audit</div>
+        <div class="report-sub">${label} · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-label">Total Hours Logged</div><div class="stat-value">${totalHours.toFixed(1)}</div></div>
+      <div class="stat"><div class="stat-label">Focus Time</div><div class="stat-value">${totalFocus}h</div></div>
+      <div class="stat"><div class="stat-label">Avg Strategic %</div><div class="stat-value">${avgStrategic}%</div></div>
+    </div>
+
+    <h2>Time by Category</h2>
+    <table><thead><tr><th>Category</th><th>Hours</th><th>% of Task Time</th></tr></thead><tbody>
+      ${Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([cat,hrs])=>`
+        <tr><td>${cat}</td><td>${hrs.toFixed(1)}h</td><td>${allTasks.length?Math.round(hrs/allTasks.reduce((s,t)=>s+t.hours,0)*100)+'%':'—'}</td></tr>
+      `).join('')}
+    </tbody></table>
+
+    <h2>Meeting Audit</h2>
+    <table><thead><tr><th>Meeting</th><th>Hours</th><th>My Role</th><th>Flag</th></tr></thead><tbody>
+      ${allMeetings.map(m=>`
+        <tr>
+          <td>${m.name}</td>
+          <td>${m.hours}h</td>
+          <td>${m.role}</td>
+          <td>${(m.role==='Could have skipped'||m.role==='Observer'||m.role==='Sent someone instead')
+            ? '<span class="flag flag-red">Review</span>'
+            : '<span class="flag flag-green">Needed</span>'}</td>
+        </tr>
+      `).join('')}
+    </tbody></table>
+    ${skippable.length ? `<p style="font-size:11px;color:#c0392b;margin-top:8px;">⚠ ${skippable.length} meeting${skippable.length>1?'s':''} flagged for review — ${skippable.reduce((s,m)=>s+m.hours,0).toFixed(1)} hours</p>` : ''}
+
+    ${stopItems.length ? `
+    <h2>What to Stop or Delegate</h2>
+    ${stopItems.map(s=>`<div class="stop-box"><div class="stop-week">${s.week.replace('-W',' W')}</div>${s.text}</div>`).join('')}
+    ` : ''}
+
+    ${commitments.length ? `
+    <h2>Commitments</h2>
+    ${commitments.map(c=>`<div class="commitment-item"><span style="font-size:10px;color:#888;margin-right:6px;">${c.week.replace('-W',' W')}</span>${c.text}</div>`).join('')}
+    ` : ''}
+
+    <div class="footer">© Scaling Minds · Leader Time Audit · Confidential</div>
+    <script>window.onload = () => { window.print(); }<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
 
 // ─── REFLECT ──────────────────────────────────────────────────────────────────
 function buildReflect() {
